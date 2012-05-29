@@ -218,8 +218,8 @@ void kill_client(struct client_fd_watcher *client) {
     client->agent->client = NULL;
     kill_agent(client->agent);
   }
-  ev_io_stop(ev_default_loop(0), &client->watcher);
   outstream_nuke(&client->outstream);
+  ev_io_stop(ev_default_loop(0), &client->watcher);
   free(client->url);
   client->url = NULL;
   free_headers(&client->request_headers);
@@ -610,6 +610,7 @@ void process_client_data(struct client_fd_watcher *w, char *data, int read_data)
 }
 
 void client_fd_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
+  assert(watcher->active == 1 /* detect freed watchers */);
   printd("client_fd_data_cb\n");
   struct client_fd_watcher *w = (struct client_fd_watcher *) watcher;
   assert(w->parser_paused == 0); // if the parser is paused, the IO watcher should be frozen
