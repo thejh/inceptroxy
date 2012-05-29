@@ -30,6 +30,7 @@
 
 #define READ_CHUNK_SIZE (64 * 1024)
 #define IDLE_AGENT_TIMEOUT 60
+#define PRINT_URLS
 
 // FIXME this depends a lot on stuff in http_parser.h
 char *http_method_strings[26] = {
@@ -38,16 +39,18 @@ char *http_method_strings[26] = {
 #undef XX
 };
 
+void printbuf(const char *format, const char *buf, size_t len) {
+  char *cstr = malloc(len+1);
+  memcpy(cstr, buf, len);
+  cstr[len] = 0;
+  printf(format, cstr);
+  free(cstr);
+}
+
 //#define DEBUG_ON
 #ifdef DEBUG_ON
   #define printd printf
-  void printbufd(const char *format, const char *buf, size_t len) {
-    char *cstr = malloc(len+1);
-    memcpy(cstr, buf, len);
-    cstr[len] = 0;
-    printf(format, cstr);
-    free(cstr);
-  }
+  #define printbufd printbuf
 #else
   void noop(char *x, ...) {}
   #define printd noop
@@ -117,8 +120,8 @@ void kill_agent(struct http_agent *agent) {
     agent->client->agent = NULL;
     kill_client(agent->client);
   }
-  ev_io_stop(ev_default_loop(0), &agent->watcher);
   outstream_nuke(&agent->outstream);
+  ev_io_stop(ev_default_loop(0), &agent->watcher);
   free_headers(&agent->response_headers);
   close(agent->watcher.fd);
   
@@ -133,9 +136,11 @@ void kill_agent(struct http_agent *agent) {
   }
   
   free(agent->host);
+  agent->host = "THIS AGENT WAS FREED - IF YOU SEE THIS IN A BROKEN AGENT, YOU NOW KNOW WHY.";
   free(agent);
 }
 
+// might return NULL!
 struct http_agent *get_agent(char *host, struct client_fd_watcher *client) {
   assert(client != NULL);
   struct http_agent *a = ht_lookup(idle_agents_by_host, host);
@@ -151,7 +156,10 @@ struct http_agent *get_agent(char *host, struct client_fd_watcher *client) {
   }
   
   struct addrinfo *host_service_info;
-  assert(getaddrinfo(host, "80", NULL, &host_service_info) == 0);
+  // FIXME make DNS async?
+  if (getaddrinfo(host, "80", NULL, &host_service_info) != 0) {
+    return NULL;
+  }
   
   int agent_fd = socket((host_service_info->ai_family == AF_INET6) ? PF_INET6 : PF_INET, SOCK_STREAM, host_service_info->ai_protocol/*can I do this? seems so*/);
   assert(agent_fd >= 0);
@@ -449,6 +457,7 @@ void agent_outstream_error_cb(struct outstream *o) {
 }
 
 char *DENY_RESPONSE = "HTTP/1.1 403 *CENSORED*\r\nConnection: keep-alive\r\nContent-Length: 10\r\n\r\n*CENSORED*";
+char *INVAL_RESPONSE = "HTTP/1.1 400 INVALID\r\nConnection: keep-alive\r\nContent-Length: 7\r\n\r\ninvalid";
 
 // headers are complete now - decide here what action to take
 int on_client_headers_complete(http_parser *p) {
@@ -465,12 +474,28 @@ int on_client_headers_complete(http_parser *p) {
   
   if (bl_check(hostname) == 1) {
     outstream_send(&w->outstream, strdup(DENY_RESPONSE), strlen(DENY_RESPONSE));
+#ifdef PRINT_URLS
+    printbuf("✘ %s\n", w->url, w->url_size);
+#endif
     w->parser_dontpause = 1;
     return 0;
   }
 
   w->agent = NULL;
   struct http_agent *agent = get_agent(hostname, w);
+  if (agent == NULL) {
+    // invalid hostname or so
+    outstream_send(&w->outstream, strdup(INVAL_RESPONSE), strlen(INVAL_RESPONSE));
+#ifdef PRINT_URLS
+    printbuf("  %s\n", w->url, w->url_size);
+#endif
+    w->parser_dontpause = 1;
+    return 0;
+  }
+  
+#ifdef PRINT_URLS
+  printbuf("✔ %s\n", w->url, w->url_size);
+#endif
   
   // FIXME alter content-encoding and stuff?
   
