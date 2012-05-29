@@ -62,6 +62,7 @@ struct client_fd_watcher;
 void kill_client(struct client_fd_watcher *client);
 void response_tcp_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents);
 void agent_outstream_error_cb(struct outstream *o);
+void process_client_data(struct client_fd_watcher *w, char *data, int read_data);
 
 
 
@@ -99,6 +100,12 @@ struct client_fd_watcher {
   char *url;
   int url_size;
   struct http_header *request_headers;
+  
+  // antipipelining
+  char *pending_data;
+  int pending_data_length;
+  char parser_paused;
+  char parser_dontpause;
 };
 
 // host:port -> first idle
@@ -118,7 +125,9 @@ void kill_agent(struct http_agent *agent) {
   if (agent->is_free == 1) {
     if (agent->next != NULL) agent->next->prev = agent->prev;
     if (agent->prev != NULL) agent->prev->next = agent->next;
-    ht_update(idle_agents_by_host, agent->host, agent->prev);
+    
+    // If we were the head, update the HT entry.
+    if (agent->prev == NULL) ht_update(idle_agents_by_host, agent->host, agent->next);
     
     ev_timer_stop(ev_default_loop(0), &agent->idle_timeout);
   }
@@ -128,10 +137,12 @@ void kill_agent(struct http_agent *agent) {
 }
 
 struct http_agent *get_agent(char *host, struct client_fd_watcher *client) {
+  assert(client != NULL);
   struct http_agent *a = ht_lookup(idle_agents_by_host, host);
   if (a != NULL) {
     printd("*** recycling! ***\n");
     assert(a->prev == NULL);
+    if (a->next != NULL) a->next->prev = NULL;
     ht_update(idle_agents_by_host, host, a->next);
     ev_timer_stop(ev_default_loop(0), &a->idle_timeout);
     assert(a->client == NULL);
@@ -181,8 +192,10 @@ void recycle_agent(struct http_agent *a) {
   a->next = next;
   if (next != NULL) next->prev = a;
   a->is_free = 1;
-  a->prev = NULL;
-  a->next = NULL;
+  // leaving these lines here so that I can later wonder what. the. fuck. I was thinking...
+  // if I had used git earlier, it could tell me at which time I wrote this :D
+  //a->prev = NULL;
+  //a->next = NULL;
   ht_update(idle_agents_by_host, a->host, a);
   
   ev_timer_init(&a->idle_timeout, agent_timeout_cb, IDLE_AGENT_TIMEOUT, 0);
@@ -334,6 +347,7 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 
 int on_server_message_complete(http_parser *p) {
   struct http_agent *a = CASTUP(p, struct http_agent, parser);
+  struct client_fd_watcher *w = a->client;
   printd("on_server_message_complete\n");
   
   char *data = malloc(strlen(final_chunk));
@@ -343,6 +357,21 @@ int on_server_message_complete(http_parser *p) {
   // disassociate
   printd("unbinding agent\n");
   recycle_agent(a);
+  
+  // thaw incoming connection from browser
+  if (w->parser_paused == 1) {
+    w->parser_paused = 0;
+    
+    // open the pipes
+    http_parser_pause(&w->parser, 0);
+    alter_ev_io_events(&w->watcher, 1, EV_READ);
+    
+    // and melt the ice
+    char *buf = w->pending_data;
+    process_client_data(w, buf, w->pending_data_length);
+    // fun fact: at this point, the connection could have already been frozen again :D
+    free(buf);
+  }
   
   return 0;
 }
@@ -436,6 +465,7 @@ int on_client_headers_complete(http_parser *p) {
   
   if (bl_check(hostname) == 1) {
     outstream_send(&w->outstream, strdup(DENY_RESPONSE), strlen(DENY_RESPONSE));
+    w->parser_dontpause = 1;
     return 0;
   }
 
@@ -511,7 +541,14 @@ int on_client_body(http_parser *p, const char *data, size_t length) {
 int on_client_message_complete(http_parser *p) {
   struct client_fd_watcher *w = CASTUP(p, struct client_fd_watcher, parser);
   printd("on_client_message_complete\n");
-  // FIXME
+  assert(w->parser_paused == 0);
+  if (w->parser_dontpause == 1) {
+    // in case we synchronously rejected the request
+    w->parser_dontpause = 0;
+  } else {
+    http_parser_pause(p, 1); // prevent pipelining from causing fuckups
+    w->parser_paused = 1; // tell client_fd_data_cb() that this is not an error
+  }
   return 0;
 }
 
@@ -525,9 +562,32 @@ http_parser_settings client_settings = {
   .on_message_complete = on_client_message_complete
 };
 
+void process_client_data(struct client_fd_watcher *w, char *data, int read_data) {
+  int nparsed = http_parser_execute(&w->parser, &client_settings, data, read_data);
+  if (w->parser.upgrade) {
+    // FIXME handle update
+  } else if (nparsed != read_data && w->parser_paused == 0) {
+      // FIXME handle error
+  } else if (w->parser_paused == 1) {
+    // If there's no associated agent, nobody can send data, and as we're about to make
+    // sure that nobody can receive it either, this connection would be dead.
+    assert(w->agent != NULL);
+    
+    // we're supposed to freeze the incoming data so that pipelining doesn't
+    // cause large fuckups (e.g. mixing responses)
+    alter_ev_io_events(&w->watcher, 0, EV_READ);
+    
+    // put the pending data into cyro
+    w->pending_data_length = read_data - nparsed;
+    w->pending_data = malloc(w->pending_data_length);
+    memcpy(w->pending_data, data + nparsed, read_data - nparsed);
+  }
+}
+
 void client_fd_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
   printd("client_fd_data_cb\n");
   struct client_fd_watcher *w = (struct client_fd_watcher *) watcher;
+  assert(w->parser_paused == 0); // if the parser is paused, the IO watcher should be frozen
   char data[READ_CHUNK_SIZE];
   int read_data;
   while ((read_data = read(watcher->fd, data, READ_CHUNK_SIZE)) != -1) {
@@ -535,12 +595,7 @@ void client_fd_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents)
       kill_client(w);
       return;
     }
-    int nparsed = http_parser_execute(&w->parser, &client_settings, data, read_data);
-    if (w->parser.upgrade) {
-      // FIXME handle update
-    } else if (nparsed != read_data) {
-      // FIXME handle error
-    }
+    process_client_data(w, data, read_data);
   }
   if (errno != EAGAIN) {
     // FIXME handle dropped connection!
@@ -560,6 +615,8 @@ void new_tcp_clients_cb(struct ev_loop *loop, struct ev_io *watcher, int revents
     unblock_fd(client_fd);
     
     struct client_fd_watcher *client_fd_watcher = malloc(sizeof(struct client_fd_watcher));
+    client_fd_watcher->parser_paused = 0;
+    client_fd_watcher->parser_dontpause = 0;
     client_fd_watcher->request_headers = NULL;
     client_fd_watcher->agent = NULL;
     client_fd_watcher->url = NULL;
