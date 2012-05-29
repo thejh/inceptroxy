@@ -667,7 +667,7 @@ int main(int argc, char **argv) {
   };
   sigaction(SIGPIPE, &action_ignore, NULL);
   idle_agents_by_host = ht_create();
-  reload_domain_blacklist();
+  reload_blacklist();
   
   // start listening
   int listen_fd = socket(AF_INET6, SOCK_STREAM, 0);
