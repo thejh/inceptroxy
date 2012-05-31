@@ -88,7 +88,7 @@ struct http_agent {
   struct client_fd_watcher *client;
   
   struct http_header *response_headers;
-  data_filter data_filter;
+  data_filter *data_filter;
   char ungzip_needed;
   
   struct http_agent *prev, *next;
@@ -300,8 +300,8 @@ int on_server_headers_complete(http_parser *p) {
       h = h->next;
     }
 	a->data_filter = NULL;
-preserve_filter:
   }
+preserve_filter:
   
   
   a->ungzip_needed = 0;
@@ -315,7 +315,7 @@ preserve_filter:
       if (strcasecmp(h->key, "Content-Length") == 0 || strcasecmp(h->key, "Transfer-Encoding") == 0) {
         goto discard_header;
       }
-	  if (intercept_response == 1) {
+	  if (a->data_filter != NULL) {
 	    if (strcasecmp(h->key, "Content-Encoding") == 0 && strcasecmp(h->value, "gzip") == 0) {
 		  a->ungzip_needed = 1;
 		  goto discard_header;

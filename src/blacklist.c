@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include "helpers.h"
+#include "blacklist.h"
+
 
 struct bl_entry {
   char *domain;
@@ -31,7 +34,7 @@ static struct bl_entry *get_bl_entry(char *host) {
   return NULL;
 }
 
-static struct bl_entry *get_bl_entry_by_url(char *url, char *url_size) {
+static struct bl_entry *get_bl_entry_by_url(char *url, int url_size) {
   // WARNING: duplicate code! (see main.c)
   char *hostname_end = memchr(url + 7, '/', url_size - 7);
   assert(hostname_end != NULL);
@@ -75,5 +78,5 @@ data_filter *bl_get_data_filter(char *url, int url_size) {
   struct bl_entry *e = get_bl_entry_by_url(url, url_size);
   if (e == NULL) return NULL;
   
-  
+  YADA return NULL;
 }
