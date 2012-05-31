@@ -475,7 +475,7 @@ int on_client_headers_complete(http_parser *p) {
   if (bl_check(hostname) == 1) {
     outstream_send(&w->outstream, strdup(DENY_RESPONSE), strlen(DENY_RESPONSE));
 #ifdef PRINT_URLS
-    printbuf("✘ %s\n", w->url, w->url_size);
+    printbuf("\033[2;31m%s\033[0m\n", w->url, w->url_size);
 #endif
     w->parser_dontpause = 1;
     return 0;
@@ -487,14 +487,14 @@ int on_client_headers_complete(http_parser *p) {
     // invalid hostname or so
     outstream_send(&w->outstream, strdup(INVAL_RESPONSE), strlen(INVAL_RESPONSE));
 #ifdef PRINT_URLS
-    printbuf("  %s\n", w->url, w->url_size);
+    printbuf("\033[2;33m%s\033[0m\n", w->url, w->url_size);
 #endif
     w->parser_dontpause = 1;
     return 0;
   }
   
 #ifdef PRINT_URLS
-  printbuf("✔ %s\n", w->url, w->url_size);
+  printbuf("\033[2;32m%s\033[0m\n", w->url, w->url_size);
 #endif
   
   // FIXME alter content-encoding and stuff?
