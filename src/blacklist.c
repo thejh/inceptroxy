@@ -9,23 +9,23 @@
 struct bl_entry {
   char *domain;
   char forbidden;
-}
+};
 
 
 struct bl_entry *blacklist = NULL;
 int blacklist_size = 0;
 
 
-static bl_entry *get_bl_entry(char *host) {
+static struct bl_entry *get_bl_entry(char *host) {
   char predotted_bl_entry[1030];
   predotted_bl_entry[0] = '.';
   
   for (int i=0; i<blacklist_size; i++) {
-    if (strcmp(host, blacklist[i]->domain) == 0) return blacklist[i];
+    if (strcmp(host, blacklist[i].domain) == 0) return &blacklist[i];
     
-    strcpy(predotted_bl_entry+1, blacklist[i]->domain);
+    strcpy(predotted_bl_entry+1, blacklist[i].domain);
     if (memcmp(host + (strlen(host) - strlen(predotted_bl_entry)), predotted_bl_entry, strlen(predotted_bl_entry)+1) == 0)
-      return blacklist[i];
+      return &blacklist[i];
   }
   
   return NULL;
@@ -48,8 +48,8 @@ void reload_blacklist() {
     char *n_i = strchr(line, '\n');
     if (r_i != NULL) *r_i = '\0';
     if (n_i != NULL) *n_i = '\0';
-    blacklist[i]->forbidden = 1;
-    blacklist[i++]->domain = strdup(line);
+    blacklist[i].forbidden = 1;
+    blacklist[i++].domain = strdup(line);
   }
   assert(i == blacklist_size);
   fclose(f);
