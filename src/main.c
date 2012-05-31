@@ -139,6 +139,7 @@ void kill_agent(struct http_agent *agent) {
   
   free(agent->host);
   agent->host = "THIS AGENT WAS FREED - IF YOU SEE THIS IN A BROKEN AGENT, YOU NOW KNOW WHY.";
+  assert(agent->watcher.active == 0);
   free(agent);
 }
 
@@ -466,6 +467,7 @@ http_parser_settings agent_parser_settings = {
 
 // an agent got a TCP data chunk back from a server
 void response_tcp_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
+  assert(watcher->active == 1);
   struct http_agent *agent = CASTUP(watcher, struct http_agent, watcher);
   char buf[20*1024];
   ssize_t len = read(watcher->fd, buf, 20*1024);
