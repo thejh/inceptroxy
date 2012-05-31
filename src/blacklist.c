@@ -31,6 +31,16 @@ static struct bl_entry *get_bl_entry(char *host) {
   return NULL;
 }
 
+static struct bl_entry *get_bl_entry_by_url(char *url, char *url_size) {
+  // WARNING: duplicate code! (see main.c)
+  char *hostname_end = memchr(url + 7, '/', url_size - 7);
+  assert(hostname_end != NULL);
+  char hostname[hostname_end - url - 7 + 1];
+  memcpy(hostname, url + 7, hostname_end - url - 7);
+  hostname[hostname_end - url - 7] = '\0';
+  return get_bl_entry(hostname);
+}
+
 void reload_blacklist() {
   FILE *f = fopen("../conf/domains.blacklist", "r");
   char line[1024];
@@ -59,4 +69,11 @@ int bl_check(char *host) {
   struct bl_entry *e = get_bl_entry(host);
   if (e == NULL) return 0;
   return e->forbidden;
+}
+
+data_filter *bl_get_data_filter(char *url, int url_size) {
+  struct bl_entry *e = get_bl_entry_by_url(url, url_size);
+  if (e == NULL) return NULL;
+  
+  
 }
