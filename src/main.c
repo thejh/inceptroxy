@@ -77,6 +77,26 @@ struct listen_fd_watcher {
   struct ev_io watcher;
 };
 
+enum data_filter_state {
+  FILTER_INACTIVE_AWAIT_OPENBRACKET,
+  FILTER_INACTIVE_AWAIT_S,
+  FILTER_INACTIVE_AWAIT_C,
+  FILTER_INACTIVE_AWAIT_R,
+  FILTER_INACTIVE_AWAIT_I,
+  FILTER_INACTIVE_AWAIT_P,
+  FILTER_INACTIVE_AWAIT_T,
+  FILTER_INACTIVE_AWAIT_CLOSEBRACKET_OR_SPACE,
+  FILTER_ACTIVE_AWAIT_OPENBRACKET,
+  FILTER_ACTIVE_AWAIT_SLASH,
+  FILTER_ACTIVE_AWAIT_S,
+  FILTER_ACTIVE_AWAIT_C,
+  FILTER_ACTIVE_AWAIT_R,
+  FILTER_ACTIVE_AWAIT_I,
+  FILTER_ACTIVE_AWAIT_P,
+  FILTER_ACTIVE_AWAIT_T,
+  FILTER_ACTIVE_AWAIT_CLOSEBRACKET,
+};
+
 // Represents the state of a proxy<-->server connection.
 struct http_agent {
   struct ev_io watcher;
@@ -89,7 +109,10 @@ struct http_agent {
   
   struct http_header *response_headers;
   data_filter data_filter;
+  enum data_filter_state data_filter_state;
+  unsigned char *data_filter_buffer;
   char ungzip_needed;
+  z_stream ungzipper;
   
   struct http_agent *prev, *next;
   char is_free; // 0 or 1
@@ -292,6 +315,7 @@ int on_server_headers_complete(http_parser *p) {
   
   a->data_filter = bl_get_data_filter(a->client->url, a->client->url_size);
   if (a->data_filter != NULL) {
+    a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
     struct http_header *h = a->response_headers;
     while (h != NULL) {
       if (strcasecmp(h->key, "Content-Type") == 0 && strncasecmp(h->value, "text/", 5) == 0) {
@@ -318,6 +342,10 @@ preserve_filter:
 	  if (intercept_response == 1) {
 	    if (strcasecmp(h->key, "Content-Encoding") == 0 && strcasecmp(h->value, "gzip") == 0) {
 		  a->ungzip_needed = 1;
+		  assert(inflateInit(&a->ungzipper) == Z_OK);
+		  a->ungzipper.zalloc = Z_NULL;
+		  a->ungzipper.zfree = Z_NULL;
+		  a->ungzipper.opaque = NULL;
 		  goto discard_header;
 		}
 	  }
@@ -368,18 +396,111 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
   struct http_agent *a = CASTUP(p, struct http_agent, parser);
   
   char *d = (char *) data; /* WARNING: Here, we promise not to touch *d before changing d! */
+  size_t dsize = size;
   
   if (a->ungzip_needed) {
-    YADA
+    assert(a->ungzipper.avail_in == 0);
+	a->ungzipper.next_in = (unsigned char *) data;
+	a->ungzipper.avail_in = size;
+	
+	size_t buffer_size = 2 * size;
+	a->avail_out = buffer_size;
+	d = malloc(buffer_size);
+	a->next_out = (unsigned char *) d;
+	while (1) {
+      int res = inflate(&a->ungzipper, Z_SYNC_FLUSH);
+	  assert(res == Z_OK || res == Z_STREAM_END);
+	  if (a->ungzipper.avail_in == 0) break;
+	  int written = a->next_out - d;
+	  d = realloc(d, buffer_size * 2);
+	  a->next_out = d + written;
+	  a->avail_out += buffer_size;
+	  buffer_size *= 2;
+	}
+	dsize = a->next_out - d;
   }
   if (a->data_filter) {
-    YADA
+    for (int i=0; i<dsize; i++) {
+	  char c = d[i];
+      switch (a->data_filter_state) {
+	    case FILTER_INACTIVE_AWAIT_OPENBRACKET:
+	      if (c == '<') a->data_filter_state = FILTER_INACTIVE_AWAIT_S;
+		  break;
+		case FILTER_INACTIVE_AWAIT_S:
+		  if (c == 's' || c == 'S') a->data_filter_state = FILTER_INACTIVE_AWAIT_C;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_C:
+		  if (c == 'c' || c == 'C') a->data_filter_state = FILTER_INACTIVE_AWAIT_R;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_R:
+		  if (c == 'r' || c == 'R') a->data_filter_state = FILTER_INACTIVE_AWAIT_I;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_I:
+		  if (c == 'i' || c == 'I') a->data_filter_state = FILTER_INACTIVE_AWAIT_P;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_P:
+		  if (c == 'p' || c == 'P') a->data_filter_state = FILTER_INACTIVE_AWAIT_T;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_T:
+		  if (c == 't' || c == 'T') a->data_filter_state = FILTER_INACTIVE_AWAIT_CLOSEBRACKET_OR_SPACE;
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_INACTIVE_AWAIT_CLOSEBRACKET_OR_SPACE:
+		  if (c == '>' || c == ' ') {
+		    // FIXME XXX TODO
+			a->data_filter_buffer = 
+			a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  }
+		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  break;
+        
+	    case FILTER_ACTIVE_AWAIT_OPENBRACKET:
+	      if (c == '<') a->data_filter_state = FILTER_ACTIVE_AWAIT_S;
+		  break;
+		case FILTER_ACTIVE_AWAIT_S:
+		  if (c == 's' || c == 'S') a->data_filter_state = FILTER_ACTIVE_AWAIT_C;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_C:
+		  if (c == 'c' || c == 'C') a->data_filter_state = FILTER_ACTIVE_AWAIT_R;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_R:
+		  if (c == 'r' || c == 'R') a->data_filter_state = FILTER_ACTIVE_AWAIT_I;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_I:
+		  if (c == 'i' || c == 'I') a->data_filter_state = FILTER_ACTIVE_AWAIT_P;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_P:
+		  if (c == 'p' || c == 'P') a->data_filter_state = FILTER_ACTIVE_AWAIT_T;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_T:
+		  if (c == 't' || c == 'T') a->data_filter_state = FILTER_ACTIVE_AWAIT_CLOSEBRACKET;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+		case FILTER_ACTIVE_AWAIT_CLOSEBRACKET:
+		  if (c == '>') {
+		    // FIXME XXX TODO
+		    a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  }
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  break;
+	  }
+	}
   }
   
-  assert(size != 0);
-  chunkify(&d, &size, 0);
+  assert(dsize != 0);
+  chunkify(&d, &dsize, 0);
   
-  return outstream_send(&a->client->outstream, d, size);
+  return outstream_send(&a->client->outstream, d, dsize);
 }
 
 int on_server_message_complete(http_parser *p) {
