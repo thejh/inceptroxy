@@ -75,14 +75,15 @@ void outstream_nuke(struct outstream *s) {
   ev_io_stop(ev_default_loop(0), &s->watcher);
 }
 
-void outstream_send(struct outstream *s, char *buf, size_t len) {
+// 0 means success, 1 means failure
+int outstream_send(struct outstream *s, char *buf, size_t len) {
   char *free_ptr = buf;
   if (s->first_buf == NULL) {
     ssize_t written = write(s->watcher.fd, buf, len);
     if (written == -1 && errno != EAGAIN) {
-      s->error_cb(s); return;
+      s->error_cb(s); return 1;
     } else if (written == 0) {
-      s->error_cb(s); return;
+      s->error_cb(s); return 1;
     }
     if (written == len) { free(buf); return; } // yaaay, no buffer magic needed!
     
@@ -108,4 +109,6 @@ void outstream_send(struct outstream *s, char *buf, size_t len) {
   if (s->pressure >= OUTSTREAM_HIGH && s->pressure - len < OUTSTREAM_HIGH && s->input_watcher != NULL) {
     alter_ev_io_events(s->input_watcher, 0, EV_READ);
   }
+  
+  return 0;
 }

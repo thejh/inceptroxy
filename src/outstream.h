@@ -31,8 +31,8 @@ void outstream_init(struct outstream *s, int fd, void (*error_cb)(struct outstre
 // Use this to add/remove backpressure.
 void outstream_input_set(struct outstream *s, struct ev_io *input_watcher);
 
-// Takes responsibility for free()'ing buf.
-void outstream_send(struct outstream *s, char *buf, size_t len);
+// Takes responsibility for free()'ing buf. 0 means success, 1 means failure.
+int outstream_send(struct outstream *s, char *buf, size_t len);
 
 void outstream_nuke(struct outstream *s);
 
