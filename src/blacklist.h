@@ -1,4 +1,4 @@
-typedef int data_filter; // FIXME!
+typedef char data_filter(char *, int); // FIXME!
 
 void reload_blacklist();
 int bl_check(char *host);

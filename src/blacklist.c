@@ -12,6 +12,7 @@
 struct bl_entry {
   char *domain;
   char forbidden;
+  char filter;
 };
 
 
@@ -57,12 +58,24 @@ void reload_blacklist() {
   int i = 0;
   while (fgets(line, 1024, f) != NULL) {
     if (strlen(line) < 3 || line[0] == '#') continue;
+    if (line[1] != ' ') assert(0 /*invalid configuration file*/);
     char *r_i = strchr(line, '\r');
     char *n_i = strchr(line, '\n');
     if (r_i != NULL) *r_i = '\0';
     if (n_i != NULL) *n_i = '\0';
-    blacklist[i].forbidden = 1;
-    blacklist[i++].domain = strdup(line);
+    blacklist[i++].domain = strdup(line+2);
+    switch (line[0]) {
+      case 'b': {
+        blacklist[i].forbidden = 1;
+        blacklist[i].filter = 0;
+        break;
+      }
+      case 'f': {
+        blacklist[i].forbidden = 0;
+        blacklist[i].filter = 1;
+        break;
+      }
+    }
   }
   assert(i == blacklist_size);
   fclose(f);
@@ -76,7 +89,7 @@ int bl_check(char *host) {
 
 data_filter *bl_get_data_filter(char *url, int url_size) {
   struct bl_entry *e = get_bl_entry_by_url(url, url_size);
-  if (e == NULL) return NULL;
+  if (e == NULL || e->filter == 0) return NULL;
   
   YADA return NULL;
 }

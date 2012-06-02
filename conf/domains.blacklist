@@ -1,61 +1,82 @@
-platform.twitter.com
-facebook.net
-facebook.com
-chartbeat.net
-chartbeat.com
-crwdcntrl.net
-google-analytics.com
-scorecardresearch.com
-contextly.com
-widgets.twimg.com
-quantserve.com
-doubleclick.net
-atdmt.com
-stumbleupon.com
-tweetmeme.com
-statcounter.com
-yadro.ru
-widgets.digg.com
-serving-sys.com
-revsci.net
-pixel.redditmedia.com
-adlog.com.com
-crowdscience.com
-bkrtx.com
-googlesyndication.com
-clicktale.com
-clicktale.net
-linkedin.com
-gigya.com
-marketo.net
-api.twitter.com
-dw.com.com
-imrworldwide.com
-questionmarket.com
-bwp.news.com
-stats.wired.com
-platform.tumblr.com
-sharethis.com
-ivwbox.de
-rl.heise.de
-nuggad.net
-cpx.golem.de
-vgwort.de
-plista.com
-intellitxt.com
-api.flattr.com
-googleadservices.com
-addthis.com
-addthisedge.com
-meebo.com
-meebocdn.net
-mmismm.com
-csi.gstatic.com
-adition.com
-smartadserver.com
-adtechus.com
-yieldmanager.com
-advertising.com
-atwola.com
-adsymptotic.com
-adzerk.net
+b platform.twitter.com
+b search.twitter.com
+b facebook.net
+b facebook.com
+b chartbeat.net
+b chartbeat.com
+b crwdcntrl.net
+b google-analytics.com
+b scorecardresearch.com
+b contextly.com
+b widgets.twimg.com
+b quantserve.com
+b doubleclick.net
+b atdmt.com
+b stumbleupon.com
+b tweetmeme.com
+b statcounter.com
+b yadro.ru
+b widgets.digg.com
+b serving-sys.com
+b revsci.net
+b pixel.redditmedia.com
+b adlog.com.com
+b crowdscience.com
+b bkrtx.com
+b googlesyndication.com
+b clicktale.com
+b clicktale.net
+b linkedin.com
+b gigya.com
+b marketo.net
+b api.twitter.com
+b dw.com.com
+b imrworldwide.com
+b questionmarket.com
+b bwp.news.com
+b stats.wired.com
+b platform.tumblr.com
+b sharethis.com
+b ivwbox.de
+b rl.heise.de
+b nuggad.net
+b cpx.golem.de
+b vgwort.de
+b plista.com
+b intellitxt.com
+b api.flattr.com
+b googleadservices.com
+b addthis.com
+b addthisedge.com
+b meebo.com
+b meebocdn.net
+b mmismm.com
+b csi.gstatic.com
+b adition.com
+b smartadserver.com
+b adtechus.com
+b yieldmanager.com
+b advertising.com
+b atwola.com
+b adsymptotic.com
+b adzerk.net
+b sitestat.com
+b oewabox.at
+b adworx.at
+b admeld.com
+b mathtag.com
+b adnxs.com
+b krxd.net
+b technoratimedia.com
+b adadvisor.net
+b invitemedia.com
+b agkn.com
+b collective-media.net
+b clkads.com
+b ic.tynt.com
+b getclicky.com
+b googletagservices.com
+b maxymiser.com
+
+# unfortunate... but I can't think of a better way right now
+b disqus.com
