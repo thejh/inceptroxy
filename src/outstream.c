@@ -85,7 +85,7 @@ int outstream_send(struct outstream *s, char *buf, size_t len) {
     } else if (written == 0) {
       s->error_cb(s); return 1;
     }
-    if (written == len) { free(buf); return; } // yaaay, no buffer magic needed!
+    if (written == len) { free(buf); return 0; } // yaaay, no buffer magic needed!
     
     // unlikely: empty->filled transition
     if (written == -1) written = 0;
