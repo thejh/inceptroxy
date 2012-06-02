@@ -478,9 +478,10 @@ void response_tcp_data_cb(struct ev_loop *loop, struct ev_io *watcher, int reven
   }
   int nparsed = http_parser_execute(&agent->parser, &agent_parser_settings, buf, len);
   if (agent->parser.upgrade) {
-    // FIXME UPGRADE
+    assert(0 /*FIXME UPGRADE*/);
   } else if (nparsed != len) {
-    assert(0);
+    kill_agent(agent);
+    return;
   }
 }
 
@@ -591,11 +592,20 @@ int on_client_headers_complete(http_parser *p) {
   return outstream_send(&agent->outstream, header_buffer, header_buffer_size - 1 /* the nullbyte is for debugging only, stupid! */);
 }
 
-int on_client_body(http_parser *p, const char *data, size_t length) {
+int on_client_body(http_parser *p, const char *data, size_t len) {
   struct client_fd_watcher *w = CASTUP(p, struct client_fd_watcher, parser);
-  printbufd("on_client_body: %s\n", data, length);
-  // FIXME
-  return 0;
+  printbufd("on_client_body: %s\n", data, len);
+  assert(w->agent != NULL);
+  char *d = (char *) data; // this is a promise!
+  
+  if (0 /* FIXME */) {
+    chunkify(&d, &len, 0);
+  } else {
+    d = malloc(len);
+    memcpy(d, data, len);
+  }
+  
+  return outstream_send(&w->agent->outstream, d, len);
 }
 
 int on_client_message_complete(http_parser *p) {
