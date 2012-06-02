@@ -359,10 +359,9 @@ discard_header: // mwahaha, unconditional-jump-protected goto target! :)
   assert(b-buf == len);
   
   free_headers(&a->response_headers);
-  outstream_send(&a->client->outstream, buf, len);
-  
   free(status_str);
-  return 0;
+  
+  return outstream_send(&a->client->outstream, buf, len);
 }
 
 // XXX HOT CALLBACK! XXX
@@ -381,9 +380,7 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
   assert(size != 0);
   chunkify(&d, &size, 0);
   
-  outstream_send(&a->client->outstream, d, size);
-  
-  return 0;
+  return outstream_send(&a->client->outstream, d, size);
 }
 
 int on_server_message_complete(http_parser *p) {
@@ -393,7 +390,9 @@ int on_server_message_complete(http_parser *p) {
   
   char *data = malloc(strlen(final_chunk));
   memcpy(data, final_chunk, strlen(final_chunk));
-  outstream_send(&a->client->outstream, data, strlen(final_chunk));
+  if (outstream_send(&a->client->outstream, data, strlen(final_chunk))) {
+    return 1;
+  }
   
   // disassociate
   printd("unbinding agent\n");
@@ -507,10 +506,12 @@ int on_client_headers_complete(http_parser *p) {
   hostname[hostname_end - w->url - 7] = '\0';
   
   if (bl_check(hostname) == 1) {
-    outstream_send(&w->outstream, strdup(DENY_RESPONSE), strlen(DENY_RESPONSE));
 #ifdef PRINT_URLS
     printbuf("\033[2;31m%s\033[0m\n", w->url, w->url_size);
 #endif
+    if (outstream_send(&w->outstream, strdup(DENY_RESPONSE), strlen(DENY_RESPONSE))) {
+	  return 1;
+	}
     w->parser_dontpause = 1;
     return 0;
   }
@@ -519,10 +520,12 @@ int on_client_headers_complete(http_parser *p) {
   struct http_agent *agent = get_agent(hostname, w);
   if (agent == NULL) {
     // invalid hostname or so
-    outstream_send(&w->outstream, strdup(INVAL_RESPONSE), strlen(INVAL_RESPONSE));
 #ifdef PRINT_URLS
     printbuf("\033[2;33m%s\033[0m\n", w->url, w->url_size);
 #endif
+    if (outstream_send(&w->outstream, strdup(INVAL_RESPONSE), strlen(INVAL_RESPONSE))) {
+	  return 1;
+	}
     w->parser_dontpause = 1;
     return 0;
   }
@@ -583,11 +586,9 @@ int on_client_headers_complete(http_parser *p) {
   *(pos++) = '\0';
   assert(pos - header_buffer == header_buffer_size);
   printd("HEADER READY FOR SENDING: \n<<<<<<<<<<<<<<<<<<<<\n%s\n>>>>>>>>>>>>>>>>>>>>\n", header_buffer);
-  outstream_send(&agent->outstream, header_buffer, header_buffer_size - 1 /* the nullbyte is for debugging only, stupid! */);
-  
   free_headers(&w->request_headers);
   
-  return 0;
+  return outstream_send(&agent->outstream, header_buffer, header_buffer_size - 1 /* the nullbyte is for debugging only, stupid! */);
 }
 
 int on_client_body(http_parser *p, const char *data, size_t length) {
