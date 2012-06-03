@@ -1,0 +1,15 @@
+src="http://rl.heise.de/
+src="http://ad-emea.doubleclick.net/
+img id="avw_pixel_intern" src="/avw-bin/ivw/
+src="http://heise.ivwbox.de/
+src="http://heise.met.vgwort.de/
+document.write("<IMG SRC=\"" + IVW
+document.write("<img src=\""+IVW
+src="http://ad.de.doubleclick.net
+<img src='http://ads.golem.de/
+.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+GS_googleEnableAllServices();
+GA_googleAddSlot
+GA_googleFetchAds()
+GA_googleFillSlot
+var _comscore = _comscore || [];

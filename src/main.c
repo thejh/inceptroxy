@@ -16,6 +16,7 @@
 #include <signal.h>
 
 #include <libev/ev.h>
+#include <zlib.h>
 
 #include "../deps/http-parser/http_parser.h"
 
@@ -86,6 +87,7 @@ enum data_filter_state {
   FILTER_INACTIVE_AWAIT_P,
   FILTER_INACTIVE_AWAIT_T,
   FILTER_INACTIVE_AWAIT_CLOSEBRACKET_OR_SPACE,
+  FILTER_INACTIVE_AWAIT_CLOSEBRACKET,
   FILTER_ACTIVE_AWAIT_OPENBRACKET,
   FILTER_ACTIVE_AWAIT_SLASH,
   FILTER_ACTIVE_AWAIT_S,
@@ -111,6 +113,8 @@ struct http_agent {
   data_filter *data_filter;
   enum data_filter_state data_filter_state;
   unsigned char *data_filter_buffer;
+  int data_filter_buffer_index;
+  int data_filter_buffer_size;
   char ungzip_needed;
   z_stream ungzipper;
   
@@ -315,6 +319,9 @@ int on_server_headers_complete(http_parser *p) {
   int status_len = asprintf(&status_str, "%i", p->status_code);
   
   a->data_filter = bl_get_data_filter(a->client->url, a->client->url_size);
+  a->data_filter_buffer = 0;
+  a->data_filter_buffer_index = 0;
+  a->data_filter_buffer_size = 0;
   if (a->data_filter != NULL) {
     a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
     struct http_header *h = a->response_headers;
@@ -343,10 +350,10 @@ preserve_filter:
 	  if (a->data_filter != NULL) {
 	    if (strcasecmp(h->key, "Content-Encoding") == 0 && strcasecmp(h->value, "gzip") == 0) {
 		  a->ungzip_needed = 1;
-		  assert(inflateInit(&a->ungzipper) == Z_OK);
 		  a->ungzipper.zalloc = Z_NULL;
 		  a->ungzipper.zfree = Z_NULL;
 		  a->ungzipper.opaque = NULL;
+		  assert(inflateInit2(&a->ungzipper, 16+MAX_WBITS) == Z_OK);
 		  goto discard_header;
 		}
 	  }
@@ -400,29 +407,35 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
   size_t dsize = size;
   
   if (a->ungzip_needed) {
-    assert(a->ungzipper.avail_in == 0);
 	a->ungzipper.next_in = (unsigned char *) data;
 	a->ungzipper.avail_in = size;
 	
 	size_t buffer_size = 2 * size;
-	a->avail_out = buffer_size;
+	a->ungzipper.avail_out = buffer_size;
 	d = malloc(buffer_size);
-	a->next_out = (unsigned char *) d;
+	a->ungzipper.next_out = (unsigned char *) d;
 	while (1) {
       int res = inflate(&a->ungzipper, Z_SYNC_FLUSH);
 	  assert(res == Z_OK || res == Z_STREAM_END);
 	  if (a->ungzipper.avail_in == 0) break;
-	  int written = a->next_out - d;
+	  int written = ((char *)a->ungzipper.next_out) - d;
 	  d = realloc(d, buffer_size * 2);
-	  a->next_out = d + written;
-	  a->avail_out += buffer_size;
+	  a->ungzipper.next_out = (Bytef *) (d + written);
+	  a->ungzipper.avail_out += buffer_size;
 	  buffer_size *= 2;
 	}
-	dsize = a->next_out - d;
+	dsize = ((char *)a->ungzipper.next_out) - d;
   }
   if (a->data_filter) {
     for (int i=0; i<dsize; i++) {
 	  char c = d[i];
+	  if (a->data_filter_buffer != NULL) {
+	    if (a->data_filter_buffer_index == a->data_filter_buffer_size) {
+	      a->data_filter_buffer_size *= 2;
+	      a->data_filter_buffer = safe_realloc(a->data_filter_buffer, a->data_filter_buffer_size);
+	    }
+	    a->data_filter_buffer[a->data_filter_buffer_index++] = c;
+	  }
       switch (a->data_filter_state) {
 	    case FILTER_INACTIVE_AWAIT_OPENBRACKET:
 	      if (c == '<') a->data_filter_state = FILTER_INACTIVE_AWAIT_S;
@@ -452,16 +465,35 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
 		  break;
 		case FILTER_INACTIVE_AWAIT_CLOSEBRACKET_OR_SPACE:
-		  if (c == '>' || c == ' ') {
-		    // FIXME XXX TODO
-			a->data_filter_buffer = 
-			a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+		  if (c != '>' && c != ' ') {
+		    a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		    break;
 		  }
-		  else a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
+		  a->data_filter_state = FILTER_INACTIVE_AWAIT_CLOSEBRACKET;
+		  // NO `break;`!
+		case FILTER_INACTIVE_AWAIT_CLOSEBRACKET:
+		  if (c == '>') {
+		    // first send out the chunk we already have
+		    char *prescript_d = d;
+		    size_t prescript_size = i + 1; // include this char!
+		    chunkify(&prescript_d, &prescript_size, 0);
+		    if (outstream_send(&a->client->outstream, prescript_d, prescript_size) != 0) return 1;
+		    
+		    // now start buffering the rest
+		    assert(a->data_filter_buffer == NULL);
+		    a->data_filter_buffer_size = 1024;
+			a->data_filter_buffer = malloc(a->data_filter_buffer_size);
+			a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
+			a->data_filter_buffer_index = 0;
+		  }
 		  break;
         
 	    case FILTER_ACTIVE_AWAIT_OPENBRACKET:
-	      if (c == '<') a->data_filter_state = FILTER_ACTIVE_AWAIT_S;
+	      if (c == '<') a->data_filter_state = FILTER_ACTIVE_AWAIT_SLASH;
+		  break;
+		case FILTER_ACTIVE_AWAIT_SLASH:
+		  if (c == '/') a->data_filter_state = FILTER_ACTIVE_AWAIT_S;
+		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
 		  break;
 		case FILTER_ACTIVE_AWAIT_S:
 		  if (c == 's' || c == 'S') a->data_filter_state = FILTER_ACTIVE_AWAIT_C;
@@ -489,13 +521,30 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 		  break;
 		case FILTER_ACTIVE_AWAIT_CLOSEBRACKET:
 		  if (c == '>') {
-		    // FIXME XXX TODO
+		    // process the script block and send the result
+		    char *script_data = (char *) a->data_filter_buffer;
+		    size_t script_data_length = a->data_filter_buffer_index;
+		    a->data_filter(&script_data, &script_data_length);
+		    if (script_data_length > 0) {
+		      chunkify(&script_data, &script_data_length, 1);
+		      outstream_send(&a->client->outstream, script_data, script_data_length);
+		    } else {
+		      free(script_data);
+		    }
+		    free(a->data_filter_buffer);
+		    
+		    // change the mode back
+		    d += i + 1;
+		    dsize -= i + 1;
+		    i = -1;
+		    a->data_filter_buffer = NULL;
 		    a->data_filter_state = FILTER_INACTIVE_AWAIT_OPENBRACKET;
 		  }
 		  else a->data_filter_state = FILTER_ACTIVE_AWAIT_OPENBRACKET;
 		  break;
 	  }
 	}
+	if (a->data_filter_buffer != NULL) return 0;
   }
   
   assert(dsize != 0);

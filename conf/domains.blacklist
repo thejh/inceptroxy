@@ -1,5 +1,6 @@
 b platform.twitter.com
 b search.twitter.com
+b p.twitter.com
 b facebook.net
 b facebook.com
 b chartbeat.net
@@ -77,6 +78,16 @@ b ic.tynt.com
 b getclicky.com
 b googletagservices.com
 b maxymiser.com
+b webtrekk.net
+b effectivemeasure.net
+b edgesuite.net
+b gaug.es
 
 # unfortunate... but I can't think of a better way right now
 b disqus.com
+
+
+
+f heise.de
+f golem.de
+f gulli.com

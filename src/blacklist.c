@@ -1,4 +1,5 @@
 #define _XOPEN_SOURCE 500
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <assert.h>
@@ -18,6 +19,9 @@ struct bl_entry {
 
 struct bl_entry *blacklist = NULL;
 int blacklist_size = 0;
+
+char **script_badwords = NULL;
+int script_badwords_size = 0;
 
 
 static struct bl_entry *get_bl_entry(char *host) {
@@ -46,6 +50,7 @@ static struct bl_entry *get_bl_entry_by_url(char *url, int url_size) {
 }
 
 void reload_blacklist() {
+  // domains blacklist
   FILE *f = fopen("../conf/domains.blacklist", "r");
   char line[1024];
   blacklist_size = 0;
@@ -63,7 +68,7 @@ void reload_blacklist() {
     char *n_i = strchr(line, '\n');
     if (r_i != NULL) *r_i = '\0';
     if (n_i != NULL) *n_i = '\0';
-    blacklist[i++].domain = strdup(line+2);
+    blacklist[i].domain = strdup(line+2);
     switch (line[0]) {
       case 'b': {
         blacklist[i].forbidden = 1;
@@ -76,8 +81,30 @@ void reload_blacklist() {
         break;
       }
     }
+    i++;
   }
   assert(i == blacklist_size);
+  fclose(f);
+  
+  // script badwords
+  f = fopen("../conf/script_texts.blacklist", "r");
+  script_badwords_size = 0;
+  while (fgets(line, 1024, f) != NULL) {
+    if (strlen(line) < 3) continue;
+    script_badwords_size++;
+  }
+  script_badwords = malloc(sizeof(char *) * script_badwords_size);
+  rewind(f);
+  i = 0;
+  while (fgets(line, 1024, f) != NULL) {
+    if (strlen(line) < 3) continue;
+    char *r_i = strchr(line, '\r');
+    char *n_i = strchr(line, '\n');
+    if (r_i != NULL) *r_i = '\0';
+    if (n_i != NULL) *n_i = '\0';
+    script_badwords[i++] = strdup(line);
+  }
+  assert(i == script_badwords_size);
   fclose(f);
 }
 
@@ -87,9 +114,23 @@ int bl_check(char *host) {
   return e->forbidden;
 }
 
+static char simple_data_filter(char **buf, size_t *buf_len) {
+  for (int i=0; i<script_badwords_size; i++) {
+    if (memmem(*buf, *buf_len, script_badwords[i], strlen(script_badwords[i])) != NULL) {
+      *buf = strdup("</script>");
+      *buf_len = 9;
+      return 0;
+    }
+  }
+  char *newbuf = malloc(*buf_len);
+  memcpy(newbuf, *buf, *buf_len);
+  *buf = newbuf;
+  return 0;
+}
+
 data_filter *bl_get_data_filter(char *url, int url_size) {
   struct bl_entry *e = get_bl_entry_by_url(url, url_size);
   if (e == NULL || e->filter == 0) return NULL;
   
-  YADA return NULL;
+  return simple_data_filter;
 }
