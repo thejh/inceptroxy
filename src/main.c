@@ -88,6 +88,8 @@ struct http_agent {
   struct client_fd_watcher *client;
   
   struct http_header *response_headers;
+  data_filter data_filter;
+  char ungzip_needed;
   
   struct http_agent *prev, *next;
   char is_free; // 0 or 1
@@ -288,6 +290,21 @@ int on_server_headers_complete(http_parser *p) {
   char *status_str;
   int status_len = asprintf(&status_str, "%i", p->status_code);
   
+  a->data_filter = bl_get_data_filter(a->client->url, a->client->url_size);
+  if (a->data_filter != NULL) {
+    struct http_header *h = a->response_headers;
+    while (h != NULL) {
+      if (strcasecmp(h->key, "Content-Type") == 0 && strncasecmp(h->value, "text/", 5) == 0) {
+	    goto preserve_filter;
+      }
+      h = h->next;
+    }
+	a->data_filter = NULL;
+preserve_filter:
+  }
+  
+  
+  a->ungzip_needed = 0;
   int len = 0;
   len += 8 + 1 + status_len + 1 + 7/*PROXIED*/ + 2;
   { 
@@ -296,16 +313,24 @@ int on_server_headers_complete(http_parser *p) {
     while (h != NULL) {
       printd("SAVED RES HEADER: <<< %s: %s >>>\n", h->key, h->value);
       if (strcasecmp(h->key, "Content-Length") == 0 || strcasecmp(h->key, "Transfer-Encoding") == 0) {
-        free(h->key);
-        free(h->value);
-        *origin = h->next; // anchestry magic! my child shall be your child, my father,
-        free(h);           // so that I can go in peace.
-        h = *origin;
-        continue;
+        goto discard_header;
       }
+	  if (intercept_response == 1) {
+	    if (strcasecmp(h->key, "Content-Encoding") == 0 && strcasecmp(h->value, "gzip") == 0) {
+		  a->ungzip_needed = 1;
+		  goto discard_header;
+		}
+	  }
       len += strlen(h->key) + 2 + strlen(h->value) + 2;
       origin = &h->next;
       h = h->next;
+	  continue;
+discard_header: // mwahaha, unconditional-jump-protected goto target! :)
+      free(h->key);
+	  free(h->value);
+	  *origin = h->next; // anchestry magic! my child shall be your child, my father,
+	  free(h);           // so that I can go in peace.
+	  h = *origin;
     }
     
     headers_append_key(&a->response_headers, "Transfer-Encoding", 17);
@@ -344,6 +369,13 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
   struct http_agent *a = CASTUP(p, struct http_agent, parser);
   
   char *d = (char *) data; /* WARNING: Here, we promise not to touch *d before changing d! */
+  
+  if (a->ungzip_needed) {
+    YADA
+  }
+  if (a->data_filter) {
+    YADA
+  }
   
   assert(size != 0);
   chunkify(&d, &size, 0);
