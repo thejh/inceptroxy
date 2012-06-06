@@ -544,7 +544,7 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 		  break;
 	  }
 	}
-	if (a->data_filter_buffer != NULL) return 0;
+	if (a->data_filter_buffer != NULL || dsize == 0) return 0;
   }
   
   assert(dsize != 0);
