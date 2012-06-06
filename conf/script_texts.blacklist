@@ -13,3 +13,4 @@ GA_googleAddSlot
 GA_googleFetchAds()
 GA_googleFillSlot
 var _comscore = _comscore || [];
+sitestat("http://de.sitestat.com/
