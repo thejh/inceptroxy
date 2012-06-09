@@ -143,8 +143,11 @@ struct client_fd_watcher {
 // host:port -> first idle
 GHashTable *idle_agents_by_host;
 
+char *AGENT_FREED = "THIS AGENT WAS FREED - IF YOU SEE THIS IN A BROKEN AGENT, YOU NOW KNOW WHY.";
+
 // will free()!
 void kill_agent(struct http_agent *agent) {
+  assert(agent->host != AGENT_FREED);
   if (agent->client != NULL) {
     agent->client->agent = NULL;
     kill_client(agent->client);
@@ -165,7 +168,7 @@ void kill_agent(struct http_agent *agent) {
   }
   
   free(agent->host);
-  agent->host = "THIS AGENT WAS FREED - IF YOU SEE THIS IN A BROKEN AGENT, YOU NOW KNOW WHY.";
+  agent->host = AGENT_FREED;
   assert(agent->watcher.active == 0);
   free(agent);
 }
@@ -402,6 +405,7 @@ discard_header: // mwahaha, unconditional-jump-protected goto target! :)
 // XXX HOT CALLBACK! XXX
 int on_server_body(http_parser *p, const char *data, size_t size) {
   struct http_agent *a = CASTUP(p, struct http_agent, parser);
+  assert(a->host != AGENT_FREED);
   
   char *d = (char *) data; /* WARNING: Here, we promise not to touch *d before changing d! */
   size_t dsize = size;
@@ -477,6 +481,7 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 		    char *prescript_d = d;
 		    size_t prescript_size = i + 1; // include this char!
 		    chunkify(&prescript_d, &prescript_size, 0);
+		    assert(a->host != AGENT_FREED);
 		    if (outstream_send(&a->client->outstream, prescript_d, prescript_size) != 0) return 1;
 		    
 		    // now start buffering the rest
@@ -527,7 +532,7 @@ int on_server_body(http_parser *p, const char *data, size_t size) {
 		    a->data_filter(&script_data, &script_data_length);
 		    if (script_data_length > 0) {
 		      chunkify(&script_data, &script_data_length, 1);
-		      outstream_send(&a->client->outstream, script_data, script_data_length);
+		      if (outstream_send(&a->client->outstream, script_data, script_data_length) != 0) return 1;
 		    } else {
 		      free(script_data);
 		    }
@@ -638,6 +643,7 @@ http_parser_settings agent_parser_settings = {
 void response_tcp_data_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
   assert(watcher->active == 1);
   struct http_agent *agent = CASTUP(watcher, struct http_agent, watcher);
+  assert(agent->host != AGENT_FREED);
   char buf[20*1024];
   ssize_t len = read(watcher->fd, buf, 20*1024);
   if (len == -1 && errno == EAGAIN) assert(0);
@@ -650,8 +656,19 @@ void response_tcp_data_cb(struct ev_loop *loop, struct ev_io *watcher, int reven
   if (agent->parser.upgrade) {
     assert(0 /*FIXME UPGRADE*/);
   } else if (nparsed != len) {
-    kill_agent(agent);
-    return;
+    switch (agent->parser.http_errno) {
+      case HPE_CB_message_begin:
+      case HPE_CB_url:
+      case HPE_CB_header_field:
+      case HPE_CB_header_value:
+      case HPE_CB_headers_complete:
+      case HPE_CB_body:
+      case HPE_CB_message_complete:
+        return;
+      default:
+        kill_agent(agent);
+        return;
+    }
   }
 }
 
